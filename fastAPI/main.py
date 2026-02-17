@@ -3,7 +3,9 @@ from typing import Optional
 from models import RAGResponse, KnowledgeResponse
 from services import generate_response_from_model
 from config import collection, embed_model
+from memory import ConversationStore
 
+conv_store = ConversationStore()
 app = FastAPI(
     title="KeepCoding",
     description="Prueba Final keepcoding",
@@ -11,8 +13,8 @@ app = FastAPI(
 )
 
 
-@app.get("/rag_model_colombiano", response_model=RAGResponse)
-def rag_model_colombiano(prompt: str, max_tokens: Optional[int] = 100):
+@app.get("/model_colombiano", response_model=RAGResponse)
+def model_colombiano(prompt: str, max_tokens: Optional[int] = 100):
     try:
 
         if not prompt or not prompt.strip():
@@ -48,7 +50,7 @@ def rag_model_colombiano(prompt: str, max_tokens: Optional[int] = 100):
 
 
 @app.get("/knowledge", response_model=KnowledgeResponse)
-def get_knowledge(query: str = "Cuanto vale los jabones de mano?", n_results: int = 5):
+def get_knowledge(query: str = "", n_results: int = 5):
     try:
 
         query_emb = embed_model.encode([query])
@@ -104,6 +106,64 @@ def get_knowledge(query: str = "Cuanto vale los jabones de mano?", n_results: in
             status_code=500,
             detail=f"Error: {str(e)}"
         )
+
+
+
+@app.get("/rag_session", response_model=RAGResponse)
+def rag_session(query: str, session_id: str = "default", max_tokens: Optional[int] = 1000000, top_k: int = 3):
+
+    try:
+        
+        q_emb = embed_model.encode([query])
+
+        if hasattr(q_emb, "tolist"):
+            q_emb = q_emb.tolist()
+        if not isinstance(q_emb[0], (list, tuple)):
+            q_embs = [q_emb]
+        else:
+            q_embs = q_emb
+
+        results = collection.query(query_embeddings=q_embs, n_results=top_k)
+
+        docs = results.get("documents")
+        if isinstance(docs, list) and len(docs) > 0 and isinstance(docs[0], list):
+            docs = docs[0]
+
+        knowledge_text = ""
+        if docs:
+            knowledge_text = "\n\n--- Conocimiento interno ---\n"
+            for i, d in enumerate(docs[:top_k], 1):
+                knowledge_text += f"[{i}] {d}\n"
+
+        history = conv_store.get_history(session_id)
+        history_text = ""
+        if history:
+            history_text = "\n\n--- Historial de conversación ---\n"
+            for m in history:
+                role = "User" if m.get("role") == "user" else "Assistant"
+                history_text += f"{role}: {m.get('text')}\n"
+
+        final_prompt = (
+            "Usa el siguiente contexto y la conversación para responder de forma clara y concisa:\n"
+            f"{knowledge_text}\n{history_text}\nUser: {query}\nAssistant:"
+        )
+
+        print("Final Prompt:\n", final_prompt)
+        conv_store.add_user_message(session_id, query)
+
+        result = generate_response_from_model(prompt=final_prompt, max_tokens=max_tokens)
+        if result.get("status") != "success":
+            raise HTTPException(status_code=500, detail=result.get("error", "Error desconocido en el modelo"))
+
+        model_text = result.get("response", "")
+        conv_store.add_model_message(session_id, model_text)
+
+        return RAGResponse(prompt=query, response=model_text, status="success")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en rag_session: {str(e)}")
 
 
 if __name__ == "__main__":
