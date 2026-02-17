@@ -4,7 +4,7 @@ fastAPI/venv
 model_llama_fine_tuning_run/venv
 model_llama_fine_tuning_run/llama_colombiano_merged
 model_llama_fine_tuning_run/llama_colombiano_mlx_q4
-cromadb/chroma_db
+chromadb/chroma_db
 chromadb/venv
 .venv
 chromadb/vector_db
