@@ -15,3 +15,15 @@ class RAGResponse(BaseModel):
     response: str = Field(..., description="Respuesta generada por el modelo")
     status: str = Field(default="success", description="Estado de la ejecución")
     error: Optional[str] = Field(default=None, description="Mensaje de error si ocurre")
+
+
+class KnowledgeItem(BaseModel):
+    id: Optional[str] = Field(None, description="Identificador del documento")
+    document: Optional[str] = Field(None, description="Texto del documento")
+    metadata: Optional[dict] = Field(None, description="Metadatos asociados al documento")
+    distance: Optional[float] = Field(None, description="Distancia/score de la similitud")
+
+
+class KnowledgeResponse(BaseModel):
+    status: str = Field(default="success", description="Estado de la consulta")
+    data: Optional[list[KnowledgeItem]] = Field(default_factory=list, description="Resultados de la consulta")
