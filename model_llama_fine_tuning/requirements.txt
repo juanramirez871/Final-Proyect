@@ -8,3 +8,4 @@ datasets
 peft
 trl
 huggingface_hub
+bitsandbytes>=0.46.1

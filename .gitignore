@@ -1,4 +1,4 @@
-model_llama_fine_tuning/model_llama_colombiano_LoRA
+model_llama_fine_tuning/llama_colombiano_LoRA
 fastAPI/__pycache__/
 fastAPI/venv
 model_llama_fine_tuning_run/venv
