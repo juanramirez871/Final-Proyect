@@ -1,10 +1,9 @@
 from typing import Dict, List, Optional, Any
 from mlx_lm import load, generate
 from config import MODEL_PATH, DEFAULT_MAX_TOKENS, SYSTEM_PROMPT
-
+from mlx_lm.sample_utils import make_sampler
 
 model, tokenizer = load(str(MODEL_PATH))
-
 
 def _build_messages(
     user_prompt: str,
@@ -14,15 +13,7 @@ def _build_messages(
     
     system_content = SYSTEM_PROMPT
     if knowledge:
-        system_content += (
-            "\n\nTienes acceso a conocimiento interno numerado. "
-            "Úsalo para responder si es relevante."
-        )
-
-    if history:
-        system_content += (
-            "\n\nTienes historial de conversación anterior, úsalo solo como contexto; "
-        )
+        system_content += "\n\nContexto de conocimiento:\n" + knowledge
 
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": system_content},
@@ -51,19 +42,26 @@ def generate_response_from_model(
     try:
         messages = _build_messages(prompt, history=history, knowledge=knowledge)
 
+        print("\n")
         print("Messages:", messages)
+        print("\n")
+        
         chat_prompt = tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=True,
         )
-
+        
+        sampler = make_sampler(
+            temp=0.9,
+            top_p=0.8
+        )
         response = generate(
             model,
             tokenizer,
             prompt=chat_prompt,
             max_tokens=max_tokens,
-            verbose=True,
+            verbose=False,
         )
 
         if isinstance(response, str):
