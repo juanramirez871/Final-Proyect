@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from typing import Optional
 from models import RAGResponse, KnowledgeResponse
 from services import generate_response_from_model
-from config import collection, embed_model
+from config import collection, embed_model, SYSTEM_PROMPT
 from memory import ConversationStore
 
 conv_store = ConversationStore()
@@ -16,13 +16,6 @@ app = FastAPI(
 @app.get("/model_colombiano", response_model=RAGResponse)
 def model_colombiano(prompt: str, max_tokens: Optional[int] = 100):
     try:
-
-        if not prompt or not prompt.strip():
-            raise HTTPException(
-                status_code=400,
-                detail="El prompt no puede estar vacío"
-            )
-        
         result = generate_response_from_model(
             prompt=prompt.strip(),
             max_tokens=max_tokens
@@ -111,9 +104,7 @@ def get_knowledge(query: str = "", n_results: int = 5):
 
 @app.get("/rag_session", response_model=RAGResponse)
 def rag_session(query: str, session_id: str = "default", max_tokens: Optional[int] = 1000000, top_k: int = 3):
-
     try:
-        
         q_emb = embed_model.encode([query])
 
         if hasattr(q_emb, "tolist"):
@@ -138,19 +129,25 @@ def rag_session(query: str, session_id: str = "default", max_tokens: Optional[in
         history = conv_store.get_history(session_id)
         history_text = ""
         if history:
-            history_text = "\n\n--- Historial de conversación ---\n"
+            history_text = "\n\n--- Historial de conversación (solo para contexto) ---\n"
             for m in history:
-                role = "User" if m.get("role") == "user" else "Assistant"
-                history_text += f"{role}: {m.get('text')}\n"
+                role = "Usuario" if m.get("role") == "user" else "Asistente"
+                history_text += f"- {role}: {m.get('text')}\n"
 
         final_prompt = (
-            "Usa el siguiente contexto y la conversación para responder de forma clara y concisa:\n"
-            f"{knowledge_text}\n{history_text}\nUser: {query}\nAssistant:"
-        )
+            f"{SYSTEM_PROMPT}\n\n"
+            "INSTRUCCIONES:\n"
+            "- Usa únicamente el contexto provisto (conocimiento e historial) para ayudar a responder.\n"
+            "- NO repitas, resumas ni reformules literalmente el historial en la respuesta.\n"
+            "- Responde únicamente a la pregunta actual y evita prefacios como 'User:' o 'Assistant:'.\n"
+            "- Si necesitas citar el conocimiento, referencia usando [1], [2], etc., y luego responde.\n\n"
+            "Contexto de conocimiento:\n"
+            f"{knowledge_text}\n"
+            "Contexto de la conversación (solo para leer, no repetir):\n"
+            f"{history_text}\n"
+            f"Pregunta actual: {query}\n\nRespuesta:")
 
-        print("Final Prompt:\n", final_prompt)
         conv_store.add_user_message(session_id, query)
-
         result = generate_response_from_model(prompt=final_prompt, max_tokens=max_tokens)
         if result.get("status") != "success":
             raise HTTPException(status_code=500, detail=result.get("error", "Error desconocido en el modelo"))

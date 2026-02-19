@@ -4,7 +4,7 @@ from peft import PeftModel
 from huggingface_hub import login
 
 BASE_MODEL = "meta-llama/Meta-Llama-3.1-8B-Instruct"
-LORA_PATH = "../model_llama_fine_tuning/model_llama_colombiano_LoRA"
+LORA_PATH = "../model_llama_fine_tuning/llama_colombiano_LoRA"
 OUTPUT_PATH = "./llama_colombiano_merged"
 
 login("API_KEY")
