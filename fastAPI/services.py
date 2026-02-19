@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, List, Optional, Any
 from mlx_lm import load, generate
 from config import MODEL_PATH, DEFAULT_MAX_TOKENS, SYSTEM_PROMPT
 
@@ -6,16 +6,52 @@ from config import MODEL_PATH, DEFAULT_MAX_TOKENS, SYSTEM_PROMPT
 model, tokenizer = load(str(MODEL_PATH))
 
 
-def _build_messages(user_prompt: str):
-    return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
+def _build_messages(
+    user_prompt: str,
+    history: Optional[List[Dict[str, str]]] = None,
+    knowledge: Optional[str] = None,
+) -> List[Dict[str, str]]:
+    
+    system_content = SYSTEM_PROMPT
+    if knowledge:
+        system_content += (
+            "\n\nTienes acceso a conocimiento interno numerado. "
+            "Úsalo para responder si es relevante."
+        )
+
+    if history:
+        system_content += (
+            "\n\nTienes historial de conversación anterior, úsalo solo como contexto; "
+        )
+
+    messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": system_content},
     ]
 
+    if history:
+        for m in history:
+            role = m.get("role", "user")
+            text = m.get("text", "")
+            if not text:
+                continue
+            if role not in ("user", "assistant", "system"):
+                role = "user"
+            messages.append({"role": role, "content": text})
 
-def generate_response_from_model(prompt: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> Dict[str, str]:
+    messages.append({"role": "user", "content": user_prompt})
+    return messages
+
+
+def generate_response_from_model(
+    prompt: str,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    history: Optional[List[Dict[str, str]]] = None,
+    knowledge: Optional[str] = None,
+) -> Dict[str, str]:
     try:
-        messages = _build_messages(prompt)
+        messages = _build_messages(prompt, history=history, knowledge=knowledge)
+
+        print("Messages:", messages)
         chat_prompt = tokenizer.apply_chat_template(
             messages,
             tokenize=False,

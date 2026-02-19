@@ -127,28 +127,14 @@ def rag_session(query: str, session_id: str = "default", max_tokens: Optional[in
                 knowledge_text += f"[{i}] {d}\n"
 
         history = conv_store.get_history(session_id)
-        history_text = ""
-        if history:
-            history_text = "\n\n--- Historial de conversación (solo para contexto) ---\n"
-            for m in history:
-                role = "Usuario" if m.get("role") == "user" else "Asistente"
-                history_text += f"- {role}: {m.get('text')}\n"
-
-        final_prompt = (
-            f"{SYSTEM_PROMPT}\n\n"
-            "INSTRUCCIONES:\n"
-            "- Usa únicamente el contexto provisto (conocimiento e historial) para ayudar a responder.\n"
-            "- NO repitas, resumas ni reformules literalmente el historial en la respuesta.\n"
-            "- Responde únicamente a la pregunta actual y evita prefacios como 'User:' o 'Assistant:'.\n"
-            "- Si necesitas citar el conocimiento, referencia usando [1], [2], etc., y luego responde.\n\n"
-            "Contexto de conocimiento:\n"
-            f"{knowledge_text}\n"
-            "Contexto de la conversación (solo para leer, no repetir):\n"
-            f"{history_text}\n"
-            f"Pregunta actual: {query}\n\nRespuesta:")
-
         conv_store.add_user_message(session_id, query)
-        result = generate_response_from_model(prompt=final_prompt, max_tokens=max_tokens)
+        result = generate_response_from_model(
+            prompt=query,
+            max_tokens=max_tokens,
+            history=history,
+            knowledge=knowledge_text,
+        )
+
         if result.get("status") != "success":
             raise HTTPException(status_code=500, detail=result.get("error", "Error desconocido en el modelo"))
 
