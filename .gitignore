@@ -8,3 +8,5 @@ chromadb/chroma_db
 chromadb/venv
 .venv
 chromadb/vector_db
+model_tts_finetuning/speecht5_tts_colombian_final
+model_tts_finetuning/speecht5_tts_colombian
