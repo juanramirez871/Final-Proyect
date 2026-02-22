@@ -5,11 +5,11 @@ import threading
 import socket
 import time
 
-ARI_URL = "http://asterisk:8088"
+ARI_URL = "http://localhost:8088"
 APP_NAME = "assistant_IA"
 USERNAME = "keepcoding"
 PASSWORD = "123"
-WS_URL = f"ws://asterisk:8088/ari/events?app={APP_NAME}&api_key={USERNAME}:{PASSWORD}"
+WS_URL = f"ws://localhost:8088/ari/events?app={APP_NAME}&api_key={USERNAME}:{PASSWORD}"
 RTP_PORT = 50000
 
 def wait_for_asterisk():
@@ -48,7 +48,7 @@ def create_external_media():
         f"{ARI_URL}/ari/channels/externalMedia",
         params={
             "app": APP_NAME,
-            "external_host": f"ari-server:{RTP_PORT}",
+            "external_host": f"host.docker.internal:{RTP_PORT}",
             "format": "ulaw"
         },
         auth=(USERNAME, PASSWORD)
