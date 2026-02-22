@@ -15,4 +15,20 @@ services:
       - ./config/extensions.conf:/etc/asterisk/extensions.conf
       - ./config/http.conf:/etc/asterisk/http.conf
       - ./config/pjsip.conf:/etc/asterisk/pjsip.conf
-      - ./config/hello.wav:/var/lib/asterisk/sounds/en/hello-world.wav
+      - ./config/hello-world.ulaw:/var/lib/asterisk/sounds/en/hello-world.ulaw
+      - ./config/rtp.conf:/etc/asterisk/rtp.conf
+    networks:
+      - ia-network
+
+  ari-server:
+    build: ./ari_server
+    container_name: ari-server
+    restart: unless-stopped
+    depends_on:
+      - asterisk
+    networks:
+      - ia-network
+
+networks:
+  ia-network:
+    driver: bridge
