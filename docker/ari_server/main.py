@@ -13,6 +13,8 @@ import os
 from silero_vad import VADIterator, get_speech_timestamps
 import torch
 import librosa
+import time
+import librosa
 
 ARI_URL = "http://localhost:8088"
 APP_NAME = "assistant_IA"
@@ -20,9 +22,13 @@ USERNAME = "keepcoding"
 PASSWORD = "123"
 WS_URL = f"ws://localhost:8088/ari/events?app={APP_NAME}&api_key={USERNAME}:{PASSWORD}"
 RTP_PORT = 50000
-torch_device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+speech_buffer = []
+last_speech_time = None
+SILENCE_TIMEOUT = 0.8
+torch_device = 'cuda' if torch.cuda.is_available() else 'cpu'
 MODEL_ID = "mlx-community/whisper-large-v3-turbo"
+
 start_load = time.time()
 mlx_whisper.transcribe(
     np.zeros(16000, dtype=np.float32),
@@ -69,22 +75,61 @@ def process_audio_chunk_with_vad(pcm_bytes):
     except Exception as e:
         print("Error en transcripción:", e)
 
+def transcribe_full_audio(pcm_bytes):
+    try:
+        audio_np = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        audio_16k = librosa.resample(audio_np, orig_sr=8000, target_sr=16000)
+
+        result = mlx_whisper.transcribe(
+            audio_16k,
+            path_or_hf_repo=MODEL_ID,
+            language="es",
+            task="transcribe",
+            verbose=False
+        )
+
+        text = result["text"].strip()
+
+        if text:
+            print("\nUsuario dijo:", text)
+
+    except Exception as e:
+        print("Error en transcripción:", e)
+
 def rtp_listener():
-    global audio_buffer
+    global speech_buffer, last_speech_time
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", RTP_PORT))
-    print(f"Escuchando RTP en puerto {RTP_PORT}")
+    temp_chunk = b""
 
     while True:
         data, addr = sock.recvfrom(2048)
         rtp_payload = data[12:]
         pcm_data = ulaw_to_pcm(rtp_payload)
-        audio_buffer += pcm_data
+        temp_chunk += pcm_data
 
-        if len(audio_buffer) >= 16000 * 2:
-            process_audio_chunk_with_vad(audio_buffer)
-            audio_buffer = b""
+        if len(temp_chunk) >= 8000:
+            audio_np = np.frombuffer(temp_chunk, dtype=np.int16).astype(np.float32) / 32768.0
+            audio_16k = librosa.resample(audio_np, orig_sr=8000, target_sr=16000)
+            speech_timestamps = get_speech_ts(
+                torch.from_numpy(audio_16k),
+                vad_model,
+                sampling_rate=16000
+            )
+
+            if len(speech_timestamps) > 0:
+                speech_buffer.append(temp_chunk)
+                last_speech_time = time.time()
+            else:
+                if last_speech_time and (time.time() - last_speech_time > SILENCE_TIMEOUT):
+                    
+                    full_audio = b"".join(speech_buffer)
+                    transcribe_full_audio(full_audio)
+                    speech_buffer = []
+                    last_speech_time = None
+
+            temp_chunk = b""
 
 def wait_for_asterisk():
     while True:
