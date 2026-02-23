@@ -1,14 +1,16 @@
+import base64
 from fastapi import FastAPI, HTTPException
 from typing import Optional
-from models import RAGResponse, KnowledgeResponse
+from models import RAGResponse, KnowledgeResponse, TTSSuccessResponse
 from services import generate_response_from_model
 from config import collection, embed_model, SYSTEM_PROMPT
 from memory import ConversationStore
+from tts import generar_audio
 
 conv_store = ConversationStore()
 app = FastAPI(
     title="KeepCoding",
-    description="Prueba Final keepcoding",
+    description="Prueba Final keepcoding :)",
     version="1.0.0"
 )
 
@@ -147,6 +149,22 @@ def rag_session(query: str, session_id: str = "default", max_tokens: Optional[in
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en rag_session: {str(e)}")
+
+
+@app.get("/tts", response_model=TTSSuccessResponse)
+def tts(text: str):
+    try:
+        generar_audio(text, nombre="result.wav")
+        with open("result.wav", "rb") as f:
+            audio_bytes = f.read()
+
+        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        return TTSSuccessResponse(status="success", audio=audio_b64)
+
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="No se encontró el archivo de audio generado")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en TTS: {str(e)}")
 
 
 if __name__ == "__main__":

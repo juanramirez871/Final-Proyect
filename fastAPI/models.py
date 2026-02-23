@@ -27,3 +27,7 @@ class KnowledgeItem(BaseModel):
 class KnowledgeResponse(BaseModel):
     status: str = Field(default="success", description="Estado de la consulta")
     data: Optional[list[KnowledgeItem]] = Field(default_factory=list, description="Resultados de la consulta")
+
+class TTSSuccessResponse(BaseModel):
+    status: str = Field(default="success", description="Estado de la ejecución")
+    audio: str = Field(..., description="Audio generado en base64")
