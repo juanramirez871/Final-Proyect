@@ -12,9 +12,12 @@ vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan").to(DEVIC
 model_inf.eval()
 spk_emb_avg = torch.tensor(np.load("../model_tts_finetuning/speaker_embedding.npy"), dtype=torch.float32).unsqueeze(0).to(DEVICE)
 
+
 def preparar_texto(texto):
     texto = texto.replace("¿", "").replace("¡", "")
-    texto = texto.replace(":", " ").replace(";", ",")
+    texto = texto.replace(":", " ")
+    texto = texto.replace(";", "")
+    texto = texto.replace(",", "")
     return re.sub(r'\s+', ' ', texto).strip()
 
 

@@ -31,3 +31,9 @@ class KnowledgeResponse(BaseModel):
 class TTSSuccessResponse(BaseModel):
     status: str = Field(default="success", description="Estado de la ejecución")
     audio: str = Field(..., description="Audio generado en base64")
+
+class AssistantResponse(BaseModel):
+    prompt: str = Field(..., description="Prompt enviado")
+    response: str = Field(..., description="Respuesta generada por el modelo")
+    audio: str = Field(..., description="Audio de la respuesta en base64")
+    status: str = Field(default="success", description="Estado de la ejecución")
