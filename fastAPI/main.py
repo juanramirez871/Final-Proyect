@@ -1,4 +1,5 @@
 import base64
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from typing import Optional
 from models import RAGResponse, KnowledgeResponse, TTSSuccessResponse, AssistantResponse
@@ -154,12 +155,10 @@ def rag_session(query: str, session_id: str = "default", max_tokens: Optional[in
 @app.get("/tts", response_model=TTSSuccessResponse)
 def tts(text: str):
     try:
-        generar_audio(text, nombre="result.wav")
-        with open("result.wav", "rb") as f:
-            audio_bytes = f.read()
-
-        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-        return TTSSuccessResponse(status="success", audio=audio_b64)
+        nombre = "result.wav"
+        generar_audio(text, nombre=nombre)
+        audio_path = str((Path(__file__).parent / nombre).resolve())
+        return TTSSuccessResponse(status="success", audio=audio_path)
 
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="No se encontró el archivo de audio generado")
@@ -206,11 +205,9 @@ def assistant(query: str, session_id: str = "default", max_tokens: Optional[int]
 
         nombre = "assistant.wav"
         generar_audio(model_text, nombre=nombre)
-        with open(nombre, "rb") as f:
-            audio_bytes = f.read()
-        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        audio_path = str((Path(__file__).parent / nombre).resolve())
 
-        return AssistantResponse(prompt=query, response=model_text, audio=audio_b64, status="success")
+        return AssistantResponse(prompt=query, response=model_text, audio=audio_path, status="success")
 
     except HTTPException:
         raise
