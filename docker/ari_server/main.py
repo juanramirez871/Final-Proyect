@@ -6,30 +6,27 @@ import socket
 import time
 import audioop
 import numpy as np
-import soundfile as sf
-import mlx_whisper
-import uuid
-import os
-from silero_vad import VADIterator, get_speech_timestamps
+import librosa
 import torch
-import librosa
-import time
-import librosa
+import os
+import subprocess
+from silero_vad import VADIterator
+import mlx_whisper
 
 ARI_URL = "http://localhost:8088"
 APP_NAME = "assistant_IA"
 USERNAME = "keepcoding"
 PASSWORD = "123"
+
 WS_URL = f"ws://localhost:8088/ari/events?app={APP_NAME}&api_key={USERNAME}:{PASSWORD}"
 RTP_PORT = 50000
+FASTAPI_URL = "http://localhost:8000/assistant"
 
-speech_buffer = []
-last_speech_time = None
 SILENCE_TIMEOUT = 0.8
-torch_device = 'cuda' if torch.cuda.is_available() else 'cpu'
 MODEL_ID = "mlx-community/whisper-large-v3-turbo"
 
-start_load = time.time()
+SOUNDS_DIR = "./sounds"
+os.makedirs(SOUNDS_DIR, exist_ok=True)
 mlx_whisper.transcribe(
     np.zeros(16000, dtype=np.float32),
     path_or_hf_repo=MODEL_ID,
@@ -42,38 +39,52 @@ vad_model, utils = torch.hub.load(
     force_reload=False,
     trust_repo=True
 )
-(get_speech_ts, _, read_audio, _, _) = utils
+(get_speech_ts, _, _, _, _) = utils
+
 
 def ulaw_to_pcm(data):
     return audioop.ulaw2lin(data, 2)
 
-audio_buffer = b""
 
-def process_audio_chunk_with_vad(pcm_bytes):
-    try:
-        audio_np = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-        audio_16k = librosa.resample(audio_np, orig_sr=8000, target_sr=16000)
-        speech_timestamps = get_speech_ts(
-            torch.from_numpy(audio_16k),
-            vad_model,
-            sampling_rate=16000
-        )
+def convert_audio_for_asterisk(input_path):
+    if not os.path.exists(input_path):
+        return None
 
-        if len(speech_timestamps) == 0:
-            return
+    unique_name = f"assistant_{int(time.time())}.wav"
+    output_path = os.path.abspath(os.path.join(SOUNDS_DIR, unique_name))
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i", input_path,
+        "-ar", "8000",
+        "-ac", "1",
+        output_path
+    ]
 
-        result = mlx_whisper.transcribe(
-            audio_16k,
-            path_or_hf_repo=MODEL_ID,
-            verbose=False
-        )
+    result = subprocess.run(command)
 
-        text = result["text"].strip()
-        if text:
-            print("Usuario dijo:", text)
+    if result.returncode != 0:
+        print("Error ejecutando ffmpeg")
+        return None
 
-    except Exception as e:
-        print("Error en transcripción:", e)
+    if not os.path.exists(output_path):
+        print("No se creó el archivo convertido")
+        return None
+
+    return output_path
+
+
+def play_audio(channel_id, audio_path):
+    if not audio_path:
+        return
+
+    filename = os.path.splitext(os.path.basename(audio_path))[0]
+    requests.post(
+        f"{ARI_URL}/ari/channels/{channel_id}/play",
+        json={"media": f"sound:{filename}"},
+        auth=(USERNAME, PASSWORD)
+    )
+
 
 def transcribe_full_audio(pcm_bytes):
     try:
@@ -92,12 +103,77 @@ def transcribe_full_audio(pcm_bytes):
 
         if text:
             print("\nUsuario dijo:", text)
+            return text
 
     except Exception as e:
-        print("Error en transcripción:", e)
+        print("Error transcribiendo:", e)
+
+    return None
+
+
+def call_ai_api(user_text):
+    try:
+        response = requests.get(
+            FASTAPI_URL,
+            params={
+                "query": user_text,
+                "session_id": "default",
+                "max_tokens": 100,
+                "top_k": 3
+            },
+            timeout=60
+        )
+
+        data = response.json()
+
+        if data["status"] == "success":
+            print("Response:", data["response"])
+            return data["audio"]
+
+    except Exception as e:
+        print("Error llamando API:", e)
+
+    return None
+
+
+def answer_call(channel_id):
+    requests.post(f"{ARI_URL}/ari/channels/{channel_id}/answer", auth=(USERNAME, PASSWORD))
+
+
+def create_bridge():
+    r = requests.post(f"{ARI_URL}/ari/bridges",
+                      json={"type": "mixing"},
+                      auth=(USERNAME, PASSWORD))
+
+    return r.json()["id"]
+
+
+def add_channel_to_bridge(bridge_id, channel_id):
+    requests.post(f"{ARI_URL}/ari/bridges/{bridge_id}/addChannel",
+                  json={"channel": channel_id},
+                  auth=(USERNAME, PASSWORD))
+
+def create_external_media():
+    r = requests.post(
+        f"{ARI_URL}/ari/channels/externalMedia",
+        params={
+            "app": APP_NAME,
+            "external_host": f"host.docker.internal:{RTP_PORT}",
+            "format": "ulaw"
+        },
+        auth=(USERNAME, PASSWORD)
+    )
+
+    return r.json()["id"]
+
+
+speech_buffer = []
+last_speech_time = None
+current_channel_id = None
+
 
 def rtp_listener():
-    global speech_buffer, last_speech_time
+    global speech_buffer, last_speech_time, current_channel_id
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", RTP_PORT))
@@ -110,6 +186,7 @@ def rtp_listener():
         temp_chunk += pcm_data
 
         if len(temp_chunk) >= 8000:
+
             audio_np = np.frombuffer(temp_chunk, dtype=np.int16).astype(np.float32) / 32768.0
             audio_16k = librosa.resample(audio_np, orig_sr=8000, target_sr=16000)
             speech_timestamps = get_speech_ts(
@@ -123,53 +200,29 @@ def rtp_listener():
                 last_speech_time = time.time()
             else:
                 if last_speech_time and (time.time() - last_speech_time > SILENCE_TIMEOUT):
-                    
+
                     full_audio = b"".join(speech_buffer)
-                    transcribe_full_audio(full_audio)
+                    user_text = transcribe_full_audio(full_audio)
+
+                    if user_text and current_channel_id:
+                        audio_path = call_ai_api(user_text)
+                        if audio_path:
+                            converted_path = convert_audio_for_asterisk(audio_path)
+                            if converted_path:
+                                play_audio(current_channel_id, converted_path)
+
                     speech_buffer = []
                     last_speech_time = None
 
             temp_chunk = b""
 
-def wait_for_asterisk():
-    while True:
-        try:
-            r = requests.get(f"{ARI_URL}/ari/asterisk/info", timeout=2, auth=(USERNAME, PASSWORD))
-            if r.status_code == 200:
-                print("Asterisk listo")
-                break
-        except Exception:
-            pass
-        
-        print("Esperando Asterisk...")
-        time.sleep(2)
-
-def answer_call(channel_id):
-    requests.post(f"{ARI_URL}/ari/channels/{channel_id}/answer", auth=(USERNAME, PASSWORD))
-
-def create_bridge():
-    response = requests.post(f"{ARI_URL}/ari/bridges", json={"type": "mixing"}, auth=(USERNAME, PASSWORD))
-    return response.json()["id"]
-
-def add_channel_to_bridge(bridge_id, channel_id):
-    requests.post(f"{ARI_URL}/ari/bridges/{bridge_id}/addChannel", json={"channel": channel_id}, auth=(USERNAME, PASSWORD))
-
-def create_external_media():
-    response = requests.post(
-        f"{ARI_URL}/ari/channels/externalMedia",
-        params={
-            "app": APP_NAME,
-            "external_host": f"host.docker.internal:{RTP_PORT}",
-            "format": "ulaw"
-        },
-        auth=(USERNAME, PASSWORD)
-    )
-
-    return response.json()["id"]
 
 def on_message(ws, message):
+    global current_channel_id
+
     event = json.loads(message)
     if event["type"] == "StasisStart":
+
         channel = event["channel"]
         channel_id = channel["id"]
         channel_name = channel.get("name", "")
@@ -177,7 +230,9 @@ def on_message(ws, message):
         if "UnicastRTP" in channel_name:
             return
 
+        current_channel_id = channel_id
         print("Llamada entrante:", channel_id)
+
         answer_call(channel_id)
         bridge_id = create_bridge()
         add_channel_to_bridge(bridge_id, channel_id)
@@ -186,24 +241,15 @@ def on_message(ws, message):
         add_channel_to_bridge(bridge_id, external_channel_id)
 
 def on_open(ws):
-    print("Conectado a ARI")
+    pass
 
-def on_error(ws, error):
-    print("Error WS:", error)
-
-def on_close(ws, close_status_code, close_msg):
-    print("WS cerrado:", close_status_code, close_msg)
 
 if __name__ == "__main__":
     threading.Thread(target=rtp_listener, daemon=True).start()
-    wait_for_asterisk()
-
     ws = websocket.WebSocketApp(
         WS_URL,
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close
+        on_message=on_message
     )
 
     ws.on_open = on_open
-    ws.run_forever(ping_interval=30, ping_timeout=10)
+    ws.run_forever()

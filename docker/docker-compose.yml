@@ -15,8 +15,8 @@ services:
       - ./config/extensions.conf:/etc/asterisk/extensions.conf
       - ./config/http.conf:/etc/asterisk/http.conf
       - ./config/pjsip.conf:/etc/asterisk/pjsip.conf
-      - ./config/hello-world.ulaw:/var/lib/asterisk/sounds/en/hello-world.ulaw
       - ./config/rtp.conf:/etc/asterisk/rtp.conf
+      - ./ari_server/sounds:/var/lib/asterisk/sounds
     networks:
       - ia-network
 
