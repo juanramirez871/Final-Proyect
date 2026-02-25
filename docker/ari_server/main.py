@@ -47,12 +47,12 @@ vad_model, utils = torch.hub.load(
 
 
 class CallSession:
+
     def __init__(self, channel_id, bridge_id):
         self.channel_id = channel_id
         self.bridge_id = bridge_id
         self.external_channel_id = None
         self.rtp_source_addr = None
-
         self.speech_buffer = []
         self.last_speech_time = None
         self.active = True
@@ -70,35 +70,37 @@ class CallSession:
         if not os.path.exists(input_path):
             return None
 
-        unique_name = f"assistant_{int(time.time() * 1000)}.wav"
-        output_path = os.path.abspath(os.path.join(SOUNDS_DIR, unique_name))
+        unique_name = f"assistant_{int(time.time() * 1000)}"
+        output_path = os.path.abspath(os.path.join(SOUNDS_DIR, f"{unique_name}.wav"))
         command = [
             "ffmpeg", "-y",
             "-i", input_path,
-            "-ar", "8000",
+            "-ar", "16000",
             "-ac", "1",
-            output_path
+            "-acodec", "pcm_s16le",
+            "-f", "s16le",
+            output_path.replace(".wav", ".sln16")
         ]
 
-        result = subprocess.run(command, capture_output=True)
+        result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
+            print(f"ffmpeg error: {result.stderr}")
             return None
-
-        if not os.path.exists(output_path):
-            return None
-        return output_path
+        
+        final_path = output_path.replace(".wav", ".sln16")
+        return final_path if os.path.exists(final_path) else None
 
 
     def play_audio(self, audio_path):
         if not audio_path or not self.channel_id:
             return
+        
         filename = os.path.splitext(os.path.basename(audio_path))[0]
         resp = requests.post(
             f"{ARI_URL}/ari/channels/{self.channel_id}/play",
             json={"media": f"sound:{filename}"},
             auth=(USERNAME, PASSWORD)
         )
-    
 
     def cleanup(self):
         if self.external_channel_id:
@@ -117,16 +119,15 @@ class CallSession:
     def transcribe_full_audio(self, pcm_bytes):
         try:
             audio_np = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-            audio_16k = librosa.resample(audio_np, orig_sr=8000, target_sr=16000)
             result = mlx_whisper.transcribe(
-                audio_16k,
+                audio_np,
                 path_or_hf_repo=MODEL_ID,
                 language="es",
                 task="transcribe",
                 verbose=False
             )
+            
             text = result["text"].strip()
-
             if text:
                 print(f"{self.channel_id} Usuario dijo: {text}")
                 return text
@@ -169,6 +170,7 @@ class CallSession:
 
         except Exception as e:
             print(f"{self.channel_id} Error en process_turn: {e}")  
+
         finally:
             self.processing_response = False
 
@@ -177,9 +179,8 @@ class CallSession:
             return
 
         audio_np = np.frombuffer(pcm_chunk, dtype=np.int16).astype(np.float32) / 32768.0
-        audio_16k = librosa.resample(audio_np, orig_sr=8000, target_sr=16000)
         speech_timestamps = get_speech_ts(
-            torch.from_numpy(audio_16k),
+            torch.from_numpy(audio_np),
             vad_model,
             sampling_rate=16000
         )
@@ -190,11 +191,9 @@ class CallSession:
         else:
             if (self.last_speech_time and
                     time.time() - self.last_speech_time > SILENCE_TIMEOUT):
-
                 full_audio = b"".join(self.speech_buffer)
                 self.speech_buffer = []
                 self.last_speech_time = None
-
                 threading.Thread(
                     target=self.process_turn,
                     args=(full_audio,),
@@ -217,7 +216,7 @@ def rtp_dispatcher():
 
     while True:
         try:
-            data, addr = sock.recvfrom(2048)
+            data, addr = sock.recvfrom(4096)
         except socket.timeout:
             continue
         except Exception as e:
@@ -226,14 +225,15 @@ def rtp_dispatcher():
 
         addr_key = f"{addr[0]}:{addr[1]}"
         rtp_payload = data[12:]
-        pcm_data = audioop.ulaw2lin(rtp_payload, 2)
+
+        pcm_data = audioop.byteswap(rtp_payload, 2)
         buf = temp_chunks.get(addr_key, b"") + pcm_data
 
-        if len(buf) < 8000:
+        if len(buf) < 16000:
             temp_chunks[addr_key] = buf
             continue
 
-        temp_chunks[addr_key] = b""
+        temp_chunks[addr_key] = b""        
         with addr_lock:
             channel_id = addr_to_channel.get(addr_key)
 
@@ -264,9 +264,6 @@ def answer_call(channel_id):
         auth=(USERNAME, PASSWORD)
     )
 
-    if resp.status_code not in (200, 204):
-        print(f"Error contestando llamada: {resp.status_code} {resp.text}")
-
 
 def create_bridge():
     r = requests.post(
@@ -292,7 +289,7 @@ def create_external_media():
         params={
             "app": APP_NAME,
             "external_host": f"host.docker.internal:{RTP_PORT}",
-            "format": "ulaw"
+            "format": "slin16"
         },
         auth=(USERNAME, PASSWORD)
     )
@@ -343,8 +340,6 @@ def on_message(ws, message):
                     del addr_to_channel[k]
 
             session.cleanup()
-    else:
-        print(f"Evento ignorado: {event_type}")
 
 
 def on_error(ws, error):
