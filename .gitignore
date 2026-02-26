@@ -1,9 +1,9 @@
 model_llama_fine_tuning/llama_colombiano_LoRA
 fastAPI/__pycache__/
 fastAPI/venv
-model_llama_fine_tuning_run/venv
-model_llama_fine_tuning_run/llama_colombiano_merged
-model_llama_fine_tuning_run/llama_colombiano_mlx_q4
+model_llama_fine_tuning/venv
+model_llama_fine_tuning/llama_colombiano_merged
+model_llama_fine_tuning/llama_colombiano_mlx_q4
 chromadb/chroma_db
 chromadb/venv
 .venv
