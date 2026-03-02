@@ -127,16 +127,13 @@ def get_knowledge(query: str = "", n_results: int = 5):
 def rag_session(query: str, session_id: str = "default", max_tokens: Optional[int] = 1000000, top_k: int = 3):
     try:
         history = conv_store.get_history(session_id)
-        knowledge_text = ""
-        if history:
-            knowledge_text = get_internal_knowledge(query, top_k)
-
         conv_store.add_user_message(session_id, query)
+        
         result = generate_response_from_model(
             prompt=query,
             max_tokens=max_tokens,
             history=history,
-            knowledge=knowledge_text,
+            top_k=top_k,
         )
 
         if result.get("status") != "success":
@@ -171,16 +168,13 @@ def tts(text: str):
 def assistant(query: str, session_id: str = "default", max_tokens: Optional[int] = 100, top_k: int = 3):
     try:
         history = conv_store.get_history(session_id)
-        knowledge_text = ""
-        if history:
-            knowledge_text = get_internal_knowledge(query, top_k)
-
         conv_store.add_user_message(session_id, query)
+        
         result = generate_response_from_model(
             prompt=query,
             max_tokens=max_tokens,
             history=history,
-            knowledge=knowledge_text,
+            top_k=top_k,
         )
 
         if result.get("status") != "success":
