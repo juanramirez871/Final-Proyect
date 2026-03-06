@@ -1,5 +1,6 @@
 import json
 import argparse
+from datetime import datetime
 from pathlib import Path
 from mlx_lm import load, generate
 
@@ -10,7 +11,9 @@ args = parser.parse_args()
 conversation = json.loads(args.messages)
 
 BASE_DIR = Path(__file__).parent.parent
+DB_PATH = BASE_DIR / "chromadb" / "chroma_db"
 MODEL_PATH = BASE_DIR / "model_llama_finetuning" / "llama_ventas_colombiano_mlx_q8"
+ORDERS_FILE = BASE_DIR / "fastAPI" / "database" / "orders.json"
 DEFAULT_MAX_TOKENS = 100
 DEFAULT_TEMPERATURE = 0.7
 SYSTEM_PROMPT = (
@@ -32,13 +35,40 @@ SYSTEM_PROMPT = (
     "como vendedor colombiano y NO uses herramientas.\n"
 )
 
+embed_model = SentenceTransformer("BAAI/bge-m3")
+client = chromadb.PersistentClient(path=DB_PATH)
+collection = client.get_collection("products")
 model, tokenizer = load(MODEL_PATH)
 
-def get_internal_knowledge(query, top_k=3):
-    return f"Resultados de productos para: {query}"
+def get_internal_knowledge(query):
+    
+    query_embedding = embed_model.encode(query).tolist()
+    results = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=2
+    )
+    
+    return results
 
 
 def create_order(product_name, quantity, price, customer_phone):
+    
+    new_order = {
+        "id": f"COL-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "product_name": product_name,
+        "quantity": quantity,
+        "price": price,
+        "customer_phone": customer_phone,
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "description": ""
+    }
+
+    with open(ORDERS_FILE, "r+") as f:
+        data = json.load(f)
+        data.append(new_order)
+        f.seek(0)
+        json.dump(data, f, indent=4)
+        
     return f"Orden creada: {quantity} x {product_name} por {price} para {customer_phone}"
 
 
@@ -46,7 +76,6 @@ def generate_response_from_model(
     model,
     tokenizer,
     max_tokens=DEFAULT_MAX_TOKENS,
-    top_k=3,
 ):
 
     messages = [
@@ -79,7 +108,7 @@ def generate_response_from_model(
             if tool_name == "get_products":
 
                 query_tool = tool_call.get("query", "")
-                knowledge = get_internal_knowledge(query_tool, top_k=top_k)
+                knowledge = get_internal_knowledge(query_tool)
                 messages.append({"role": "assistant", "content": text})
                 messages.append(
                     {
