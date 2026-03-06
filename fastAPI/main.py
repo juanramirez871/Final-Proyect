@@ -1,10 +1,10 @@
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
-from config import embed_model, collection, venv_vits, script_vits, folder_vits, venv_llama, script_llama, folder_llama, memory_llama
+from config import embed_model, collection, memory_llama
+from service import call_model_vits, call_model_llama
 import json
-import subprocess
 
 
 app = FastAPI(
@@ -46,30 +46,7 @@ def read_knowledge(query: str, request: Request):
 @app.get("/generate_speech")
 def generate_speech(query: str, request: Request):
 
-    result = subprocess.run(
-        [
-            str(venv_vits),
-            str(script_vits),
-            "--text", query
-        ],
-        capture_output=True,
-        text=True,
-        cwd=str(folder_vits)
-    )
-
-    if result.returncode != 0:
-        print(result.stderr)
-        raise HTTPException(status_code=500, detail="Error al generar el audio")
-
-    path = None
-    for line in result.stdout.splitlines():
-        if line.startswith("RESULT_PATH="):
-            path = line.replace("RESULT_PATH=", "").strip()
-            break
-
-    if not path:
-        raise HTTPException(status_code=500, detail="No se pudo obtener la ruta del audio")
-
+    path = call_model_vits(query)
     return {
         "query": query,
         "path": path
@@ -79,35 +56,22 @@ def generate_speech(query: str, request: Request):
 @app.get("/generate_text")
 def generate_text(message: str, request: Request):
 
-    memory_llama.append({"role": "user", "content": message})
-    result = subprocess.run(
-        [
-            str(venv_llama),
-            str(script_llama),
-            "--messages", json.dumps(memory_llama)
-        ],
-        capture_output=True,
-        text=True,
-        cwd=str(folder_llama)
-    )
-
-    if result.returncode != 0:
-        print(result.stderr)
-        raise HTTPException(status_code=500, detail="Error al generar el texto")
-
-    text = None
-    for line in result.stdout.splitlines():
-        if line.startswith("RESULT_TEXT="):
-            text = line.replace("RESULT_TEXT=", "").strip()
-            break
-
-    if not text:
-        raise HTTPException(status_code=500, detail="No se pudo obtener el texto")
-
-    memory_llama.append({"role": "assistant", "content": text})
+    text = call_model_llama(memory_llama, message)
     return {
         "messages": memory_llama,
         "text": text
+    }
+
+
+@app.get("/assistant")
+def assistant(message: str, request: Request):
+    
+    text = call_model_llama(memory_llama, message)
+    path = call_model_vits(text)
+    return {
+        "messages": memory_llama,
+        "text": text,
+        "path": path
     }
 
 
