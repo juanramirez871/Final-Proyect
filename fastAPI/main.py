@@ -2,7 +2,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
-from config import embed_model, collection, venv_vits, script_vits, folder_vits, venv_llama, script_llama, folder_llama
+from config import embed_model, collection, venv_vits, script_vits, folder_vits, venv_llama, script_llama, folder_llama, memory_llama
 import json
 import subprocess
 
@@ -77,13 +77,14 @@ def generate_speech(query: str, request: Request):
 
 
 @app.get("/generate_text")
-def generate_text(messages: str, request: Request):
+def generate_text(message: str, request: Request):
 
+    memory_llama.append({"role": "user", "content": message})
     result = subprocess.run(
         [
             str(venv_llama),
             str(script_llama),
-            "--messages", messages
+            "--messages", json.dumps(memory_llama)
         ],
         capture_output=True,
         text=True,
@@ -94,7 +95,6 @@ def generate_text(messages: str, request: Request):
         print(result.stderr)
         raise HTTPException(status_code=500, detail="Error al generar el texto")
 
-    print(result.stdout)
     text = None
     for line in result.stdout.splitlines():
         if line.startswith("RESULT_TEXT="):
@@ -104,8 +104,9 @@ def generate_text(messages: str, request: Request):
     if not text:
         raise HTTPException(status_code=500, detail="No se pudo obtener el texto")
 
+    memory_llama.append({"role": "assistant", "content": text})
     return {
-        "messages": messages,
+        "messages": memory_llama,
         "text": text
     }
 

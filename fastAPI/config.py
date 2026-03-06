@@ -16,3 +16,4 @@ folder_vits = BASE_DIR / "model_vits_finetuning"
 venv_llama = BASE_DIR / "model_llama_finetuning" / ".venv" / "bin" / "python"
 script_llama = BASE_DIR / "model_llama_finetuning" / "run_model_llama.py"
 folder_llama = BASE_DIR / "model_llama_finetuning"
+memory_llama = []

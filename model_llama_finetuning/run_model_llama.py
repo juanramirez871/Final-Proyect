@@ -7,9 +7,7 @@ from mlx_lm import load, generate
 parser = argparse.ArgumentParser()
 parser.add_argument("--messages", required=True)
 args = parser.parse_args()
-
-messages_input = json.loads(args.messages)
-system, *conversation = messages_input
+conversation = json.loads(args.messages)
 
 BASE_DIR = Path(__file__).parent.parent
 MODEL_PATH = BASE_DIR / "model_llama_finetuning" / "llama_ventas_colombiano_mlx_q8"
