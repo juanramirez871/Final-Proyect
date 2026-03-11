@@ -91,8 +91,6 @@ El modelo tiene 3 opciones de generacion de respuesta
 
 ![orden](assets/9.png)
 
-El resultado es la respuesta textual del asistente.
-
 ### Generación del audio de la respuesta
 
 Una vez generada la respuesta textual, esta se envía a un tercer servicio FastAPI encargado de convertir el texto en voz.
