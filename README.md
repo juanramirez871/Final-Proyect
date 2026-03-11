@@ -49,11 +49,11 @@ Usé dos ambientes
 
 ![docker](assets/7.png)
 
-#### Arquitectura del proyecto
+### Arquitectura del proyecto
 
 ![diagrama](assets/8.jpg)
 
-#### Recepción de la llamada
+### Recepción de la llamada
 
 El flujo comienza con una llamada entrante que llega al sistema a través del protocolo SIP/RTP. Esta llamada es gestionada por Asterisk (PBX), que es el encargado de manejar la comunicación telefónica.
 
@@ -66,37 +66,43 @@ El servidor ARI recibe los paquetes RTP provenientes de Asterisk y procesa el au
 
 En este punto el audio del usuario se envía a un sistema de speech-to-text (Whisper) que convierte el audio de la llamada en texto del usuario.
 
-#### Procesamiento del mensaje del usuario
+### Procesamiento del mensaje del usuario
 
 El texto generado se envía al endpoint /assistant del FastAPI principal.
 Este endpoint actúa como orquestador de todo el flujo, coordinando los diferentes servicios del sistema.
 
 El endpoint /assistant recibe el texto del usuario y lo envía a un segundo servicio FastAPI encargado de generar la respuesta con un modelo de lenguaje.
 
-#### Generación de respuesta con modelo de lenguaje
+### Generación de respuesta con modelo de lenguaje
 
 El segundo servicio FastAPI contiene el modelo Meta LLaMA con el Fine-tuning, encargado de generar la respuesta conversacional.
 
-Antes de generar la respuesta final, el modelo utiliza una arquitectura RAG, donde el sistema consulta una base de conocimiento para recuperar información relevante que se añade al contexto del modelo.
+El modelo tiene 3 opciones de generacion de respuesta
+
+1. Generar texto normal conversacional
+
+2. Obtener productos: el modelo dispara la accion RAG, donde el sistema consulta una base de conocimiento vectorial para recuperar información relevante que se añade al contexto del modelo.
+
+3. Crear Orden: el modelo dispara la accion de crear una orden en el sistema, esto pasa cuando el modelo detecta que la venta ya se cerro
 
 El resultado es la respuesta textual del asistente.
 
 ![text](assets/4.png)
 
-#### Generación del audio de la respuesta
+### Generación del audio de la respuesta
 
 Una vez generada la respuesta textual, esta se envía a un tercer servicio FastAPI encargado de convertir el texto en voz.
 
 Este servicio utiliza un modelo de síntesis de voz VITS para generar el audio correspondiente a la respuesta. despues se le pasa a un SNAC para mejorar la calidad del audio
+
+![audio](assets/5.png)
 
 Es importante mencionar que el modelo de audio se ejecuta en un FastAPI separado del modelo de generación de texto.
 La razón de esta separación es que las versiones de dependencias de las librerías necesarias para el modelo de voz y para el modelo de lenguaje entraban en conflicto cuando se intentaban instalar dentro del mismo entorno virtual.
 
 Para evitar problemas de compatibilidad y mantener un entorno estable, cada modelo se desplegó en servicios independientes con sus propios entornos virtuales.
 
-![audio](assets/5.png)
-
-#### Respuesta en la llamada
+### Respuesta en la llamada
 
 El archivo de audio generado se envía nuevamente al servidor ARI, que lo retransmite a Asterisk.
 
