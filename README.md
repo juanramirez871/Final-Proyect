@@ -3,6 +3,7 @@
 ## Autor: Juan Diego Ramirez Mogotocoro
 
 La presentación de la idea y solución se encuentra: ```assets/pitch.pptx```
+
 Las reflexiones del proyecto se encuentran: ```assets/Reflexiones.pptx```
 
 ### Explicación técnica y documentación del proyecto
@@ -35,3 +36,15 @@ Las reflexiones del proyecto se encuentran: ```assets/Reflexiones.pptx```
 
 * Asterisk
     - Es un canal de entrada de voz, Asterisk recibe la llamada telefónica del cliente y captura el audio. Sin él, el modelo TTS y el LLM no tienen por donde recibir voz real del usuario, solo funcionarían en una interfaz web o de texto, no en un contexto de llamada, es opensource por lo tanto no tengo limitaciones de adaptarlo a mis requerimientos
+
+#### Ambientes usados
+
+Usé dos ambientes
+
+1. Usé el servicio de ```https://www.runpod.io``` principalmente para hacer los entrenos de los modelos para tener más capacidad computacional y reducir tiempos de espera, ya que un entreno que duraría en mi MAC 10h, usando una gráfica buena (ejemplo RTX 5090) en RunPod lo podía reducir en ~2h el entrenamiento y para ejecutar los modelos para reducir el tiempo de generación de respuesta
+
+![runpods](assets/1.png)
+
+2. Ambiente local, lo usé para levantar los contenedores de Docker para poder usar Asterisk
+
+![docker](assets/7.png)
