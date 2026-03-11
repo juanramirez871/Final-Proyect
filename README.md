@@ -51,7 +51,7 @@ Usé dos ambientes
 
 #### Arquitectura del proyecto
 
-![diagrama](assets/8.png)
+![diagrama](assets/8.jpg)
 
 ##### Recepción de la llamada
 
