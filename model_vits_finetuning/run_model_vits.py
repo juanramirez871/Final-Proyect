@@ -2,26 +2,34 @@ import numpy as np
 import soundfile as sf
 import torch
 import traceback
-import torchaudio
+import io
 from pathlib import Path
-import argparse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from resemble_enhance.enhancer.inference import denoise, enhance as re_enhance
 from TTS.tts.configs.vits_config import VitsConfig
 from TTS.tts.models.vits import Vits
 from TTS.tts.layers.vits.networks import TextEncoder
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--text", required=True, help="Frase a sintetizar")
-args = parser.parse_args()
+app = FastAPI()
 
-FRASES = [args.text]
 CKPT = "./vits_colombian/output/train5/best_model.pth"
-OUTPUTS = Path()
-OUTPUTS.mkdir(parents=True, exist_ok=True)
-NOISE_SCALE = 0.8
-NOISE_SCALE_W = 0.6
-LENGTH_SCALE = 1.5
+NOISE_SCALE = 0.65
+NOISE_SCALE_W = 0.8
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def velocidad_texto(texto):
+    palabras = len(texto.split())
+
+    if palabras > 20:
+        return 1.1
+
+    if palabras < 6:
+        return 0.9
+
+    return 1.0
 
 
 best_ckpt = Path(CKPT)
@@ -40,6 +48,7 @@ for parent in [
 if config_path_ft is None:
     raise FileNotFoundError("No se encontró config.json para el modelo")
 
+
 inf_config = VitsConfig()
 inf_config.load_json(str(config_path_ft))
 inf_model = Vits.init_from_config(inf_config)
@@ -57,8 +66,8 @@ inf_model.text_encoder = TextEncoder(
 )
 
 inf_model.load_checkpoint(inf_config, str(best_ckpt), eval=True)
-DEVICE = "cpu"
 inf_model = inf_model.to(DEVICE).eval()
+SR_OUT = inf_config.audio.sample_rate
 
 def extraer_wav(outputs):
 
@@ -83,98 +92,91 @@ def extraer_wav(outputs):
     raise TypeError(f"Formato desconocido: {type(outputs)}")
 
 
-def main():
+def generar_audio(texto: str):
 
-    sr_out = inf_config.audio.sample_rate
-    for i, texto in enumerate(FRASES):
+    tokens = inf_model.tokenizer.text_to_ids(texto)
+    length_scale = velocidad_texto(texto)
 
-        try:
+    x = torch.LongTensor(tokens).unsqueeze(0).to(DEVICE)
+    x_lengths = torch.LongTensor([x.shape[1]]).to(DEVICE)
+    lang_ids = torch.LongTensor([0]).to(DEVICE)
 
-            tokens = inf_model.tokenizer.text_to_ids(texto)
-            x = torch.LongTensor(tokens).unsqueeze(0).to(DEVICE)
-            x_lengths = torch.LongTensor([x.shape[1]]).to(DEVICE)
-            lang_ids = torch.LongTensor([0]).to(DEVICE)
+    mejor_wav = None
+    mejor_energia = -1
 
-            mejor_wav = None
-            mejor_energia = -1
+    for seed in range(10):
 
-            for seed in [0, 42, 99, 123, 7]:
+        torch.manual_seed(seed)
+        with torch.no_grad():
 
-                torch.manual_seed(seed)
-                with torch.no_grad():
+            outputs = inf_model.inference(
+                x,
+                aux_input={
+                    "x_lengths": x_lengths,
+                    "speaker_ids": None,
+                    "language_ids": lang_ids,
+                    "noise_scale": NOISE_SCALE,
+                    "noise_scale_w": NOISE_SCALE_W,
+                    "length_scale": length_scale,
+                },
+            )
 
-                    outputs = inf_model.inference(
-                        x,
-                        aux_input={
-                            "x_lengths": x_lengths,
-                            "speaker_ids": None,
-                            "language_ids": lang_ids,
-                            "noise_scale": NOISE_SCALE,
-                            "noise_scale_w": NOISE_SCALE_W,
-                            "length_scale": LENGTH_SCALE,
-                        },
-                    )
+        wav = extraer_wav(outputs)
+        audio_tmp = wav.squeeze().cpu().numpy()
+        energia = np.abs(audio_tmp).mean()
 
-                wav = extraer_wav(outputs)
-                audio_tmp = wav.squeeze().cpu().numpy()
-                energia = np.abs(audio_tmp).mean()
+        if energia > mejor_energia:
+            mejor_energia = energia
+            mejor_wav = audio_tmp
 
-                if energia > mejor_energia:
-                    mejor_energia = energia
-                    mejor_wav = audio_tmp
+    audio_np = mejor_wav
+    peak = np.abs(audio_np).max()
+    if peak > 0:
+        audio_np = audio_np / peak * 0.8
 
-            audio_np = mejor_wav
-            peak = np.abs(audio_np).max()
+    umbral = 0.01
+    margen = int(SR_OUT * 0.15)
+    muestras = np.where(np.abs(audio_np) > umbral)[0]
 
-            if peak > 0:
-                audio_np = audio_np / peak * 0.92
+    if len(muestras) > 0:
+        ultimo = muestras[-1] + margen
+        audio_np = audio_np[: min(ultimo, len(audio_np))]
 
-            umbral = 0.01
-            margen = int(sr_out * 0.15)
-            muestras = np.where(np.abs(audio_np) > umbral)[0]
+    dwav = torch.tensor(audio_np, dtype=torch.float32)
+    with torch.no_grad():
 
-            if len(muestras) > 0:
-                ultimo = muestras[-1] + margen
-                audio_np = audio_np[: min(ultimo, len(audio_np))]
+        denoised, sr2 = denoise(dwav, SR_OUT, device=DEVICE)
+        enhanced, sr3 = re_enhance(
+            denoised,
+            sr2,
+            device=DEVICE,
+            nfe=64,
+            solver="rk4",
+            lambd=0.6,
+            tau=0.5,
+        )
 
-            temp_path = OUTPUTS / f"temp_{i+1}.wav"
-            sf.write(temp_path, audio_np, sr_out)
+    enhanced_np = enhanced.cpu().numpy()
+    muestras = np.where(np.abs(enhanced_np) > umbral)[0]
 
-            dwav, sr = torchaudio.load(temp_path)
-            dwav = dwav.mean(0)
+    if len(muestras) > 0:
+        ultimo = muestras[-1] + int(sr3 * 0.15)
+        enhanced_np = enhanced_np[: min(ultimo, len(enhanced_np))]
 
-            with torch.no_grad():
-
-                denoised, sr2 = denoise(dwav, sr, device=DEVICE)
-                enhanced, sr3 = re_enhance(
-                    denoised,
-                    sr2,
-                    device=DEVICE,
-                    nfe=16,
-                    solver="midpoint",
-                    lambd=0.5,
-                    tau=0.5,
-                )
-
-            enhanced_np = enhanced.cpu().numpy()
-            muestras = np.where(np.abs(enhanced_np) > umbral)[0]
-
-            if len(muestras) > 0:
-                ultimo = muestras[-1] + int(sr3 * 0.15)
-                enhanced_np = enhanced_np[: min(ultimo, len(enhanced_np))]
-
-            enhanced = torch.tensor(enhanced_np, dtype=torch.float32)
-            out_path = OUTPUTS / f"resultado_{i+1}.wav"
-            torchaudio.save(out_path, enhanced.unsqueeze(0), sr3)
-            temp_path.unlink()
-            
-            print(f"RESULT_PATH={out_path.resolve()}")
-
-        except Exception:
-
-            print(f"ERROR frase {i+1}: {texto}")
-            traceback.print_exc()
+    return enhanced_np, sr3
 
 
-if __name__ == "__main__":
-    main()
+@app.get("/tts")
+def tts(texto: str):
+
+    try:
+        audio, sr = generar_audio(texto)
+        buffer = io.BytesIO()
+        sf.write(buffer, audio, sr, format="WAV")
+        buffer.seek(0)
+
+        return StreamingResponse(buffer, media_type="audio/wav")
+
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Error generando audio")

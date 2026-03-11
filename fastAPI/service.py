@@ -1,63 +1,62 @@
-from config import venv_vits, script_vits, folder_vits, venv_llama, script_llama, folder_llama
-import subprocess
 from fastapi import HTTPException
-import json
+import requests
+from config import VITS_SERVER, LLAMA_SERVER
+from pathlib import Path
 
 
-def call_model_vits(query: str):
-    result = subprocess.run(
-        [
-            str(venv_vits),
-            str(script_vits),
-            "--text", query
-        ],
-        capture_output=True,
-        text=True,
-        cwd=str(folder_vits)
-    )
+def call_model_vits(text: str):
 
-    if result.returncode != 0:
-        print(result.stderr)
-        raise HTTPException(status_code=500, detail="Error al generar el audio")
+    try:
+        res = requests.get(
+            VITS_SERVER,
+            params={"texto": text},
+            stream=True
+        )
 
-    path = None
-    for line in result.stdout.splitlines():
-        if line.startswith("RESULT_PATH="):
-            path = line.replace("RESULT_PATH=", "").strip()
-            break
+        if res.status_code != 200:
+            raise HTTPException(status_code=500, detail="Error en servidor TTS")
 
-    if not path:
-        raise HTTPException(status_code=500, detail="No se pudo obtener la ruta del audio")
-    
-    return path
+        output_path = Path("generated_audio.wav")
+
+        with open(output_path, "wb") as f:
+            for chunk in res.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+
+        absolute_path = str(output_path.resolve())
+        return absolute_path
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def call_model_llama(memory_llama: list, message: str):
-    memory_llama.append({"role": "user", "content": message})
-    result = subprocess.run(
-        [
-            str(venv_llama),
-            str(script_llama),
-            "--messages", json.dumps(memory_llama)
-        ],
-        capture_output=True,
-        text=True,
-        cwd=str(folder_llama)
-    )
 
-    print(result.stdout)
-    if result.returncode != 0:
-        print(result.stderr)
-        raise HTTPException(status_code=500, detail="Error al generar el texto")
+    memory_llama.append({
+        "role": "user",
+        "content": message
+    })
 
-    text = None
-    for line in result.stdout.splitlines():
-        if line.startswith("RESULT_TEXT="):
-            text = line.replace("RESULT_TEXT=", "").strip()
-            break
+    try:
 
-    if not text:
-        raise HTTPException(status_code=500, detail="No se pudo obtener el texto")
+        r = requests.post(
+            LLAMA_SERVER,
+            json={"messages": memory_llama}
+        )
 
-    memory_llama.append({"role": "assistant", "content": text})
-    return text
+        if r.status_code != 200:
+            raise HTTPException(status_code=500, detail="Error en servidor LLM")
+
+        data = r.json()
+        text = data["response"]
+
+        memory_llama.append({
+            "role": "assistant",
+            "content": text
+        })
+
+        return text
+
+    except Exception as e:
+
+        raise HTTPException(status_code=500, detail=str(e))

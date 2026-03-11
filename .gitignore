@@ -10,3 +10,4 @@ chromadb/venv
 chromadb/vector_db
 model_vits_finetuning/vits_colombian
 model_vits_finetuning/install_dependencies.ipynb
+docker/ari_server/venv

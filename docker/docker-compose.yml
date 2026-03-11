@@ -24,10 +24,12 @@ services:
     build: ./ari_server
     container_name: ari-server
     restart: unless-stopped
-    depends_on:
-      - asterisk
+    volumes:
+      - ./ari_server/sounds:/app/sounds
     networks:
       - ia-network
+    depends_on:
+      - asterisk
 
 networks:
   ia-network:

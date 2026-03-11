@@ -1,3 +1,4 @@
+from hashlib import algorithms_available
 import json
 import requests
 import websocket
@@ -6,37 +7,26 @@ import socket
 import time
 import audioop
 import numpy as np
-import librosa
 import torch
+import uuid
 import os
 import subprocess
 from silero_vad import VADIterator
-import mlx_whisper
+from faster_whisper import WhisperModel
 
 
-ARI_URL = "http://localhost:8088"
+ARI_URL = "http://asterisk:8088"
 APP_NAME = "assistant_IA"
 USERNAME = "keepcoding"
 PASSWORD = "123"
-
-WS_URL = f"ws://localhost:8088/ari/events?app={APP_NAME}&api_key={USERNAME}:{PASSWORD}"
+WS_URL = f"ws://asterisk:8088/ari/events?app={APP_NAME}&api_key={USERNAME}:{PASSWORD}"
 RTP_PORT = 50000
-FASTAPI_URL = "http://localhost:8000/assistant"
-
+FASTAPI_URL = "https://khhp4r8s0dwyry-8000.proxy.runpod.net/assistant"
 SILENCE_TIMEOUT = 0.8
-MODEL_ID = "mlx-community/whisper-large-v3-turbo"
-
 SOUNDS_DIR = "./sounds"
+
 os.makedirs(SOUNDS_DIR, exist_ok=True)
-
-
-mlx_whisper.transcribe(
-    np.zeros(16000, dtype=np.float32),
-    path_or_hf_repo=MODEL_ID,
-    verbose=False
-)
-
-
+whisper_model = WhisperModel("large-v3-turbo", device="cpu", compute_type="int8")
 vad_model, utils = torch.hub.load(
     repo_or_dir='snakers4/silero-vad',
     model='silero_vad',
@@ -86,17 +76,16 @@ class CallSession:
         if result.returncode != 0:
             print(f"ffmpeg error: {result.stderr}")
             return None
-        
+
         final_path = output_path.replace(".wav", ".sln16")
         return final_path if os.path.exists(final_path) else None
-
 
     def play_audio(self, audio_path):
         if not audio_path or not self.channel_id:
             return
-        
+
         filename = os.path.splitext(os.path.basename(audio_path))[0]
-        resp = requests.post(
+        requests.post(
             f"{ARI_URL}/ari/channels/{self.channel_id}/play",
             json={"media": f"sound:{filename}"},
             auth=(USERNAME, PASSWORD)
@@ -104,34 +93,26 @@ class CallSession:
 
     def cleanup(self):
         if self.external_channel_id:
-            resp = requests.delete(
+            requests.delete(
                 f"{ARI_URL}/ari/channels/{self.external_channel_id}",
                 auth=(USERNAME, PASSWORD)
             )
 
         if self.bridge_id:
-            resp = requests.delete(
+            requests.delete(
                 f"{ARI_URL}/ari/bridges/{self.bridge_id}",
                 auth=(USERNAME, PASSWORD)
             )
 
-
     def transcribe_full_audio(self, pcm_bytes):
         try:
             audio_np = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-            result = mlx_whisper.transcribe(
-                audio_np,
-                path_or_hf_repo=MODEL_ID,
-                language="es",
-                task="transcribe",
-                verbose=False
-            )
-            
-            text = result["text"].strip()
+            segments, _ = whisper_model.transcribe(audio_np, language="es")
+            text = " ".join([s.text for s in segments]).strip()
+
             if text:
                 print(f"{self.channel_id} Usuario dijo: {text}")
                 return text
-
         except Exception as e:
             print(f"{self.channel_id} Error transcribiendo: {e}")
         return None
@@ -140,21 +121,38 @@ class CallSession:
         try:
             response = requests.get(
                 FASTAPI_URL,
-                params={
-                    "query": user_text,
-                    "session_id": self.channel_id,
-                    "max_tokens": 100,
-                    "top_k": 3
-                },
+                params={"message": user_text},
                 timeout=60
             )
+
+            if response.status_code != 200:
+                print(f"{self.channel_id} Error API")
+                return None
+
             data = response.json()
-            if data["status"] == "success":
-                print(f"{self.channel_id} Respuesta IA: {data['response']}")
-                return data["audio"]
+            text = data.get("text")
+            audio_url = data.get("audio_url")
+
+            if text:
+                print(f"{self.channel_id} Respuesta IA: {text}")
+
+            if not audio_url:
+                return None
+
+            local_file = os.path.join(
+                SOUNDS_DIR,
+                f"assistant_{uuid.uuid4().hex}.wav"
+            )
+
+            r = requests.get(audio_url)
+            with open(local_file, "wb") as f:
+                f.write(r.content)
+
+            return local_file
 
         except Exception as e:
             print(f"{self.channel_id} Error API: {e}")
+
         return None
 
     def process_turn(self, full_audio):
@@ -169,7 +167,7 @@ class CallSession:
                         self.play_audio(converted_path)
 
         except Exception as e:
-            print(f"{self.channel_id} Error en process_turn: {e}")  
+            print(f"{self.channel_id} Error en process_turn: {e}")
 
         finally:
             self.processing_response = False
@@ -233,7 +231,7 @@ def rtp_dispatcher():
             temp_chunks[addr_key] = buf
             continue
 
-        temp_chunks[addr_key] = b""        
+        temp_chunks[addr_key] = b""
         with addr_lock:
             channel_id = addr_to_channel.get(addr_key)
 
@@ -259,7 +257,7 @@ def rtp_dispatcher():
 
 
 def answer_call(channel_id):
-    resp = requests.post(
+    requests.post(
         f"{ARI_URL}/ari/channels/{channel_id}/answer",
         auth=(USERNAME, PASSWORD)
     )
@@ -271,7 +269,6 @@ def create_bridge():
         json={"type": "mixing"},
         auth=(USERNAME, PASSWORD)
     )
-
     return r.json()["id"]
 
 
@@ -288,12 +285,11 @@ def create_external_media():
         f"{ARI_URL}/ari/channels/externalMedia",
         params={
             "app": APP_NAME,
-            "external_host": f"host.docker.internal:{RTP_PORT}",
+            "external_host": f"ari-server:{RTP_PORT}",
             "format": "slin16"
         },
         auth=(USERNAME, PASSWORD)
     )
-
     return r.json()["id"]
 
 
@@ -328,7 +324,6 @@ def on_message(ws, message):
         if "UnicastRTP" in channel_name:
             return
 
-        print(f"[{channel_id}] Evento de cierre: {event_type}")
         with sessions_lock:
             session = active_sessions.pop(channel_id, None)
 
